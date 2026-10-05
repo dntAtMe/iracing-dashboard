@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1d22">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Race Engineer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-tab="dash" data-conn="down">
+
+<header class="status">
+  <div id="flag" class="flag" aria-live="polite">Offline</div>
+  <div class="event">
+    <div id="track" class="event-track">Connecting</div>
+    <div id="sess" class="event-sess"></div>
+  </div>
+  <div class="clock">
+    <span class="clock-lbl">Remaining</span>
+    <span id="h-rem" class="clock-val mono">--:--</span>
+  </div>
+  <div class="tools">
+    <button id="btn-fs" class="tool" title="Fullscreen" aria-label="Fullscreen">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+    </button>
+    <button id="btn-set" class="tool" title="Units and options" aria-label="Units and options" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8"/></svg>
+    </button>
+  </div>
+  <div id="settings" class="settings" hidden>
+    <label>Speed <select data-pref="speed"><option value="kmh">km/h</option><option value="mph">mph</option></select></label>
+    <label>Temperature <select data-pref="temp"><option value="c">°C</option><option value="f">°F</option></select></label>
+    <label>Fuel <select data-pref="fuel"><option value="l">Litres</option><option value="gal">Gallons</option></select></label>
+    <label>Tyre pressure <select data-pref="press"><option value="kpa">kPa</option><option value="psi">psi</option><option value="bar">bar</option></select></label>
+    <label>Delta against <select data-pref="delta"><option value="best">My best lap</option><option value="session">Session best</option></select></label>
+  </div>
+</header>
+
+<main>
+  <div class="col">
+    <section class="tile wheel" data-tabs="dash">
+      <div id="leds" class="leds"></div>
+      <div class="cluster">
+        <div class="readout">
+          <div id="speed" class="readout-val">0</div>
+          <div id="speed-u" class="readout-lbl">km/h</div>
+        </div>
+        <div class="gear-wrap">
+          <div id="gear" class="gear">N</div>
+          <div id="rpm" class="readout-lbl mono">0 rpm</div>
+        </div>
+        <div class="readout right">
+          <div id="pos" class="readout-val">–</div>
+          <div id="pos-of" class="readout-lbl">Position</div>
+        </div>
+      </div>
+      <div class="delta">
+        <div class="delta-track"><div id="delta-bar"></div></div>
+        <div id="delta" class="delta-num mono">±0.000</div>
+      </div>
+      <div class="times">
+        <div><span class="k">Current</span><span id="t-cur" class="v mono">-:--.---</span></div>
+        <div><span class="k">Last</span><span id="t-last" class="v mono">-:--.---</span></div>
+        <div><span class="k">Best</span><span id="t-best" class="v mono pb">-:--.---</span></div>
+        <div class="lapcell"><span class="k">Lap</span><span id="t-lap" class="v mono">–</span></div>
+      </div>
+      <div class="pedals">
+        <div class="pedal"><span class="k">Throttle</span><div class="pbar"><i id="pb-thr" class="thr"></i></div><span id="pv-thr" class="pv mono">0</span></div>
+        <div class="pedal"><span class="k">Brake</span><div class="pbar"><i id="pb-brk" class="brk"></i></div><span id="pv-brk" class="pv mono">0</span></div>
+        <div class="pedal"><span class="k">Clutch</span><div class="pbar"><i id="pb-clu" class="clu"></i></div><span id="pv-clu" class="pv mono">0</span></div>
+      </div>
+      <div id="badges" class="badges"></div>
+    </section>
+
+    <section class="tile" data-tabs="dash">
+      <h2 class="tile-h">Fuel <span id="f-samples" class="tile-meta"></span></h2>
+      <div class="tile-b">
+        <div class="fuel-head">
+          <div class="fuel-level"><span id="f-level" class="mono">–</span><span id="f-unit">L</span></div>
+          <div class="fuel-gauge"><i id="f-gauge"></i></div>
+        </div>
+        <dl class="kv">
+          <div><dt>Average per lap</dt><dd id="f-avg" class="mono">–</dd></div>
+          <div><dt>Last lap</dt><dd id="f-last" class="mono">–</dd></div>
+          <div><dt>Laps in tank</dt><dd id="f-laps" class="mono strong">–</dd></div>
+          <div><dt>Laps to go</dt><dd id="f-togo" class="mono strong">–</dd></div>
+          <div><dt>Needed to finish</dt><dd id="f-finish" class="mono">–</dd></div>
+          <div><dt>Fuel to add</dt><dd id="f-add" class="mono strong">–</dd></div>
+          <div><dt>Stops needed</dt><dd id="f-stops" class="mono">–</dd></div>
+          <div><dt>Set for next stop</dt><dd id="f-pit" class="mono">–</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="tile" data-tabs="dash">
+      <h2 class="tile-h">Session</h2>
+      <div class="tile-b">
+        <dl class="kv">
+          <div><dt>Flag</dt><dd id="s-flag">–</dd></div>
+          <div><dt>State</dt><dd id="s-state">–</dd></div>
+          <div><dt>Incidents</dt><dd id="s-inc" class="mono strong">–</dd></div>
+          <div><dt>Stint</dt><dd id="s-stint" class="mono">–</dd></div>
+          <div><dt>Air</dt><dd id="s-air" class="mono">–</dd></div>
+          <div><dt>Track</dt><dd id="s-trk" class="mono">–</dd></div>
+          <div><dt>Surface</dt><dd id="s-wet">–</dd></div>
+          <div><dt>Wind</dt><dd id="s-wind" class="mono">–</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="tile" data-tabs="car">
+      <h2 class="tile-h">Car systems</h2>
+      <div class="tile-b">
+        <dl class="kv">
+          <div><dt>Water</dt><dd id="y-water" class="mono">–</dd></div>
+          <div><dt>Oil</dt><dd id="y-oil" class="mono">–</dd></div>
+          <div><dt>Oil pressure</dt><dd id="y-oilp" class="mono">–</dd></div>
+          <div><dt>Fuel pressure</dt><dd id="y-fuelp" class="mono">–</dd></div>
+          <div><dt>Voltage</dt><dd id="y-volt" class="mono">–</dd></div>
+          <div><dt>Brake bias</dt><dd id="y-bias" class="mono">–</dd></div>
+          <div><dt>ABS</dt><dd id="y-abs" class="mono">–</dd></div>
+          <div><dt>Traction control</dt><dd id="y-tc" class="mono">–</dd></div>
+          <div class="wide"><dt>Repairs left, required and optional</dt><dd id="y-rep" class="mono">–</dd></div>
+        </dl>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="tile" data-tabs="timing map">
+      <h2 class="tile-h">Relative</h2>
+      <table class="tbl" id="rel"><tbody></tbody></table>
+    </section>
+
+    <section class="tile" data-tabs="map">
+      <h2 class="tile-h">Track <span id="map-note" class="tile-meta"></span></h2>
+      <div class="map-wrap"><canvas id="map"></canvas></div>
+    </section>
+
+    <section class="tile" data-tabs="car">
+      <h2 class="tile-h">Tyres <span class="tile-meta">Updated by iRacing in the pit box</span></h2>
+      <div class="tile-b">
+        <div class="tyres">
+          <div class="tyre" data-c="LF"></div><div class="axle"></div><div class="tyre" data-c="RF"></div>
+          <div class="tyre" data-c="LR"></div><div class="axle"></div><div class="tyre" data-c="RR"></div>
+        </div>
+        <div id="ty-pit" class="note"></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="tile" data-tabs="timing">
+      <h2 class="tile-h">Standings <span id="st-count" class="tile-meta"></span></h2>
+      <div class="tbl-scroll">
+        <table class="tbl" id="stand">
+          <thead><tr><th>Pos</th><th class="l">Driver</th><th>Gap</th><th class="hide-s">Int</th><th>Last</th><th class="hide-s">Best</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="tile" data-tabs="car dash">
+      <h2 class="tile-h">Inputs
+        <span class="tile-meta legend"><i class="sw thr"></i>Throttle <i class="sw brk"></i>Brake <i class="sw spd"></i>Speed</span>
+      </h2>
+      <canvas id="trace"></canvas>
+    </section>
+
+    <section class="tile" data-tabs="timing">
+      <h2 class="tile-h">Lap history</h2>
+      <div class="tbl-scroll short">
+        <table class="tbl" id="laps">
+          <thead><tr><th>Lap</th><th>Time</th><th>To best</th><th>Fuel</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<nav id="tabs">
+  <button data-go="dash">Drive</button>
+  <button data-go="timing">Timing</button>
+  <button data-go="car">Car</button>
+  <button data-go="map">Track</button>
+</nav>
+
+<script src="app.js"></script>
+</body>
+</html>

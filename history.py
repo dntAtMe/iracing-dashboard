@@ -6,9 +6,11 @@ server opens its own short-lived read connections (WAL mode makes that safe).
 """
 import json
 import os
+import re
 import shutil
 import sqlite3
 import string
+import subprocess
 import sys
 import time
 import zlib
@@ -147,11 +149,69 @@ class Storage:
         self.config_path.write_text(json.dumps(cfg, indent=2))
 
 
+UNC_HOST = re.compile(r"^[\\/]{2}([^\\/]+)[\\/]?$")
+
+
+def network_places():
+    """Network shares Windows remembers for this user (`net use`), mapped to a letter or not."""
+    if sys.platform != "win32":
+        return []
+    try:
+        out = subprocess.run(["net", "use"], capture_output=True, text=True, timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    places, seen = [], set()
+    for line in out.splitlines():
+        unc = re.search(r"(\\\\\S+)", line)  # the remote column is the only UNC path on the line
+        if not unc:
+            continue
+        letter = re.search(r"(?:^|\s)([A-Z]:)(?=\s)", line)
+        path = f"{letter.group(1)}\\" if letter else unc.group(1)
+        if path.lower() not in seen:
+            seen.add(path.lower())
+            places.append({"path": path, "label": f"{letter.group(1)} {unc.group(1)}" if letter else unc.group(1)})
+    return places
+
+
+def list_shares(host):
+    """Disk shares on a server, via NetShareEnum (works with Windows and Samba/NAS servers)."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    class SHARE_INFO_1(ctypes.Structure):
+        _fields_ = [("netname", wintypes.LPWSTR), ("type", wintypes.DWORD), ("remark", wintypes.LPWSTR)]
+
+    netapi = ctypes.WinDLL("Netapi32.dll")
+    buf = ctypes.c_void_p()
+    read, total, resume = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD(0)
+    res = netapi.NetShareEnum(ctypes.c_wchar_p(f"\\\\{host}"), 1, ctypes.byref(buf), wintypes.DWORD(0xFFFFFFFF),
+                              ctypes.byref(read), ctypes.byref(total), ctypes.byref(resume))
+    if res not in (0, 234) or not buf.value:
+        raise ValueError(f"Can't list the shares on {host}. Type the full path instead, like \\\\{host}\\share")
+    try:
+        items = ctypes.cast(buf, ctypes.POINTER(SHARE_INFO_1))
+        return sorted((items[i].netname for i in range(read.value)
+                       if (items[i].type & 0xFF) == 0 and not items[i].netname.endswith("$")), key=str.lower)
+    finally:
+        netapi.NetApiBufferFree(buf)
+
+
 def browse(path, filename="history.db"):
-    """Subfolders of `path` for the folder picker."""
+    """Subfolders of `path` for the folder picker. A bare `\\\\server` lists its shares."""
+    drives = []
+    if sys.platform == "win32":
+        drives = [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
+    places = network_places()
+    host = UNC_HOST.match(str(path).strip())
+    if host:
+        return {"path": f"\\\\{host.group(1)}", "parent": None, "dirs": list_shares(host.group(1)),
+                "drives": drives, "places": places, "hasHistory": False, "network": True, "canUse": False}
     p = Path(path).expanduser()
     if not p.is_dir():
-        raise ValueError("Not a folder")
+        raise ValueError("Can't open that folder. Check the path, and for a network share that you can open it in Explorer")
     dirs = []
     try:
         for c in p.iterdir():
@@ -162,12 +222,11 @@ def browse(path, filename="history.db"):
                 pass
     except OSError:
         raise ValueError("Can't open that folder") from None
-    drives = []
-    if sys.platform == "win32":
-        drives = [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
     parent = str(p.parent) if p.parent != p else None
+    if parent is None and p.drive.startswith(("\\\\", "//")):
+        parent = "\\\\" + p.drive.strip("\\/").split("\\")[0]  # up from a share goes to its server
     return {"path": str(p), "parent": parent, "dirs": sorted(dirs, key=str.lower), "drives": drives,
-            "hasHistory": (p / filename).exists(), "network": is_network_path(p)}
+            "places": places, "hasHistory": (p / filename).exists(), "network": is_network_path(p), "canUse": True}
 
 
 def flag_name(bits):

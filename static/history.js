@@ -778,17 +778,22 @@ async function browseTo(path) {
   $('store-path').value = b.path;
   $('store-up').disabled = !b.parent;
   const drives = $('store-drives');
-  drives.hidden = !b.drives.length;
-  drives.innerHTML = b.drives.map((d) => `<option ${b.path.toUpperCase().startsWith(d.toUpperCase()) ? 'selected' : ''}>${esc(d)}</option>`).join('');
+  const places = [...b.drives.map((d) => ({ path: d, label: d })), ...(b.places || [])];
+  drives.hidden = !places.length;
+  const cur = places.filter((pl) => b.path.toLowerCase().startsWith(pl.path.toLowerCase().replace(/\\$/, '')))
+    .sort((x, y) => y.path.length - x.path.length)[0];
+  drives.innerHTML = (cur ? '' : '<option value="" selected>Go to…</option>') + places.map((pl, k) =>
+    `${k === b.drives.length && k ? '<option disabled>──────────</option>' : ''}<option value="${esc(pl.path)}" ${pl === cur ? 'selected' : ''}>${esc(pl.label)}</option>`).join('');
   $('store-list').innerHTML = b.dirs.length
     ? b.dirs.map((d) => `<button type="button" class="dir" data-name="${esc(d)}">${esc(d)}</button>`).join('')
-    : '<div class="note pad">No subfolders</div>';
+    : `<div class="note pad">${b.canUse === false ? 'No shares found on this server' : 'No subfolders'}</div>`;
   $('store-list').querySelectorAll('.dir').forEach((el) => el.addEventListener('click', () => {
     const sep = b.path.includes('\\') ? '\\' : '/';
     browseTo(b.path.endsWith(sep) ? b.path + el.dataset.name : b.path + sep + el.dataset.name);
   }));
-  $('store-here').textContent = b.hasHistory ? 'This folder already has recorded races.' : 'No races here yet. New sessions will be saved here.';
-  $('store-use').disabled = b.path === ST.info.dir;
+  $('store-here').textContent = b.canUse === false ? 'Pick a share on this server.'
+    : b.hasHistory ? 'This folder already has recorded races.' : 'No races here yet. New sessions will be saved here.';
+  $('store-use').disabled = b.canUse === false || b.path === ST.info.dir;
 }
 
 async function useFolder() {
@@ -816,7 +821,7 @@ async function useFolder() {
 
 $('btn-store').addEventListener('click', openStorage);
 $('store-up').addEventListener('click', () => ST.browse?.parent && browseTo(ST.browse.parent));
-$('store-drives').addEventListener('change', (e) => browseTo(e.target.value));
+$('store-drives').addEventListener('change', (e) => { if (e.target.value) browseTo(e.target.value); });
 $('store-go').addEventListener('click', () => browseTo($('store-path').value.trim()));
 $('store-path').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); browseTo(e.target.value.trim()); } });
 $('store-use').addEventListener('click', useFolder);

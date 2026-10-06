@@ -494,6 +494,7 @@ class Engine:
         my_est = at(est, me, 0) or 0
         my_tot = (at(lapc, me, 0) or 0) + my_pct
         lap_len = (self.drivers.get(me) or {}).get("est") or self._avg_lap() or 90.0
+        my_cls = (self.drivers.get(me) or {}).get("clsId")
         rows = []
         for idx, d in self.drivers.items():
             p = at(pct, idx, -1)
@@ -504,11 +505,16 @@ class Engine:
                 dp -= 1
             elif dp < -0.5:
                 dp += 1
-            gap = (at(est, idx, 0) or 0) - my_est
-            if dp > 0 and gap < 0:
-                gap += lap_len
-            elif dp < 0 and gap > 0:
-                gap -= lap_len
+            if d["clsId"] == my_cls:
+                gap = (at(est, idx, 0) or 0) - my_est
+                if dp > 0 and gap < 0:
+                    gap += lap_len
+                elif dp < 0 and gap > 0:
+                    gap -= lap_len
+            else:
+                # CarIdxEstTime runs on each car's own class lap time, so it can't be compared
+                # across classes; use the track distance at our own pace instead
+                gap = dp * lap_len
             if idx == me:
                 dp = gap = 0.0
             lap_diff = (at(lapc, idx, 0) or 0) + p - my_tot

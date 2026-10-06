@@ -295,7 +295,7 @@ body[data-limiter="1"] .gear { color: var(--amber); }
 .hist .status { grid-template-columns: auto 1fr auto; }
 
 .hgrid {
-  display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 1px;
+  display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 1px;
   background: var(--rule); min-height: calc(100vh - 57px);
 }
 .side { display: flex; flex-direction: column; background: var(--tile); min-width: 0; }

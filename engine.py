@@ -158,9 +158,10 @@ class TrackMap:
 
 
 class Engine:
-    def __init__(self, source, maps_dir):
+    def __init__(self, source, maps_dir, recorder=None):
         self.src = source
         self.map = TrackMap(maps_dir)
+        self.recorder = recorder
         self.connected = False
         self._next_connect = 0.0
         self._next_info = 0.0
@@ -209,6 +210,8 @@ class Engine:
         elif not self.src.alive():
             self.src.disconnect()
             self.connected = False
+            if self.recorder:
+                self.recorder.end_session()
             return False
         self.src.freeze()
         if now >= self._next_info:
@@ -219,7 +222,13 @@ class Engine:
         valid = (bool(self.g("IsOnTrack")) and not self.g("IsReplayPlaying") and not self.g("OnPitRoad")
                  and surface in (None, SURFACE_OFF_TRACK, SURFACE_ON_TRACK))
         self.map.feed(self.g("SessionTime"), self.g("LapDistPct"), self.g("Speed"), self.g("Yaw"), valid)
+        if self.recorder:
+            self.recorder.step(self, now)
         return True
+
+    @property
+    def session_key(self):
+        return ":".join(str(k) for k in (self._session_key or ()))
 
     def _refresh_info(self):
         di = self.g("DriverInfo") or {}
@@ -252,6 +261,7 @@ class Engine:
         self.track = {
             "name": wi.get("TrackDisplayName") or wi.get("TrackName") or "",
             "config": wi.get("TrackConfigName") or "", "length": wi.get("TrackLength") or "",
+            "id": wi.get("TrackID"),
         }
         track_key = f"{wi.get('TrackID', 'x')}_{wi.get('TrackConfigName') or ''}"
         if track_key != self._track_key:
@@ -273,6 +283,8 @@ class Engine:
             if self._session_key is not None:
                 self._reset_session()
             self._session_key = key
+        if self.recorder:
+            self.recorder.on_info(self)
 
     def _track_laps(self, now):
         lc, fuel, t = self.g("LapCompleted"), self.g("FuelLevel"), self.g("SessionTime")

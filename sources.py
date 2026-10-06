@@ -115,6 +115,7 @@ class _MockTrack:
             curv.append(math.atan2(math.sin(dh), math.cos(dh)) / self.ds[i])
         w = 9
         curv = [sum(curv[(i + k) % n] for k in range(-w, w + 1)) / (2 * w + 1) for i in range(n)]
+        self.curv = curv
 
         v = [min(VMAX, math.sqrt(LAT_G / max(abs(k), 1e-6))) for k in curv]
         for _ in range(3):
@@ -230,6 +231,7 @@ class MockSource:
         self.lap_factor = 1.0
         self.tyre = {c: [60.0, 60.0, 60.0] for c in CORNERS}
         self._info = self._session_info()
+        self._update(1e-3)  # publish a first sample so the first read isn't empty
 
     def _session_info(self):
         drivers = [{"CarIdx": 0, "UserName": "Pace Car", "CarNumber": "0", "CarIsPaceCar": 1,
@@ -309,6 +311,8 @@ class MockSource:
         if self.pitting:
             thr, brk = min(thr, 0.3), 0.0
         v = pl["v"] if racing else 0.0
+        curv = self.track.curv[i]
+        prev_v, self._prev_v = getattr(self, "_prev_v", v), v
         self.fuel = max(0.0, self.fuel - (0.035 * thr + 0.002) * dt)
 
         gear = next((g + 1 for g, top in enumerate(GEAR_TOPS) if v < top * 0.95), 6)
@@ -366,7 +370,9 @@ class MockSource:
             "SessionTimeRemain": max(0.0, self.RACE_LENGTH - self.t), "SessionLapsRemainEx": 32767,
             "SessionNum": 0, "SessionState": 4 if self.t < self.RACE_LENGTH else 5, "SessionFlags": flags,
             "Speed": v, "RPM": rpm, "Gear": gear, "Throttle": thr, "Brake": brk, "Clutch": 1.0,
-            "SteeringWheelAngle": 0.0, "Yaw": self.track.heading[i],
+            "SteeringWheelAngle": math.atan(2.6 * curv) * 14.0, "Yaw": self.track.heading[i],
+            "LatAccel": v * v * curv, "LongAccel": (v - prev_v) / dt if dt > 0 else 0.0, "YawRate": v * curv,
+            "BrakeABSactive": brk > 0.9,
             "Lap": math.floor(pl["dist"] / L) + 1, "LapCompleted": max(0, math.floor(pl["dist"] / L)),
             "LapDistPct": pct, "LapCurrentLapTime": cur, "LapLastLapTime": pl["last"], "LapBestLapTime": best,
             "LapDeltaToBestLap": cur - frac * best if best > 0 else 0.0, "LapDeltaToBestLap_OK": best > 0,

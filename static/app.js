@@ -73,10 +73,12 @@ const FLAGS = [
   [0x40, 'DEBRIS', 'debris'],
   [0x4 | 0x400, 'GREEN', 'green'],
 ];
-const WARN = [[0x1, 'Water temp'], [0x2, 'Fuel pressure'], [0x4, 'Oil pressure'], [0x8, 'Stalled'], [0x40, 'Oil temp']];
+const WARN = [[0x1, 'Water temp'], [0x2, 'Fuel pressure'], [0x4, 'Oil pressure'], [0x40, 'Oil temp']];
 
 // ---------- state ----------
 const S = { fast: null, slow: null, map: null, sock: 'down', lastFast: 0, dirty: false };
+const PARAMS = new URLSearchParams(location.search);
+const REPLAY = PARAMS.get('replay');
 const TR = { n: 400, i: 0, count: 0, thr: new Float32Array(400), brk: new Float32Array(400), spd: new Float32Array(400) };
 
 // ---------- websocket ----------
@@ -105,7 +107,7 @@ function connect() {
 
 function updateConn() {
   const live = S.sock === 'up' && S.fast?.connected && performance.now() - S.lastFast < 3000;
-  const state = S.sock !== 'up' ? 'down' : live ? 'live' : 'wait';
+  const state = REPLAY ? 'live' : S.sock !== 'up' ? 'down' : live ? 'live' : 'wait';
   if (document.body.dataset.conn !== state) {
     document.body.dataset.conn = state;
     if (state === 'live') renderSlow();  // restore the header text that the waiting state replaced
@@ -196,7 +198,8 @@ function renderFast() {
   const badges = [];
   if (warn & 0x10) badges.push('<span class="badge info">Pit limiter</span>');
   if (f.pit) badges.push('<span class="badge pit">Pit lane</span>');
-  for (const [m, l] of WARN) if (warn & m) badges.push(`<span class="badge warn">${l}</span>`);
+  if (warn & 0x8) badges.push('<span class="badge">Engine off</span>');  // low pressures are expected then
+  else for (const [m, l] of WARN) if (warn & m) badges.push(`<span class="badge warn">${l}</span>`);
   if (f.replay) badges.push('<span class="badge">Replay</span>');
   const html = badges.join('');
   if ($('badges').innerHTML !== html) $('badges').innerHTML = html;
@@ -233,6 +236,7 @@ function renderSlow() {
   txt('track', [s.track?.name, s.track?.config].filter(Boolean).join(', ') || 'iRacing');
   const sess = [s.session?.name || s.session?.type, s.car?.name].filter(Boolean).map((v) => `<span>${esc(v)}</span>`);
   if (s.source === 'mock') sess.push('<span class="sim">Simulated data</span>');
+  if (REPLAY) sess.push('<span class="sim">Replay</span>');
   const sessHtml = sess.join('');
   if ($('sess').innerHTML !== sessHtml) $('sess').innerHTML = sessHtml;
   renderFuel(s);
@@ -504,6 +508,8 @@ document.querySelectorAll('[data-pref]').forEach((sel) => {
   });
 });
 
+$('nav-hist').href = `history.html${location.search}`;
+
 $('btn-fs').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen?.();
   else document.documentElement.requestFullscreen?.().catch(() => {});
@@ -519,5 +525,200 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 window.addEventListener('resize', () => { S.dirty = true; });
 
-connect();
+// ---------- replay of a recorded session ----------
+// Plays stored broadcast frames through the same render path the WebSocket uses.
+const R = {
+  sid: Number(REPLAY), tl: null, t: 0, playing: false, speed: 1, last: 0, loading: null, drag: false,
+  fastT: [], fastF: [], slowT: [], slowF: [], lo: Infinity, hi: -Infinity, fi: -1, sj: -1,
+};
+
+function withToken(url) {
+  const tok = PARAMS.get('token');
+  return tok ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(tok)}` : url;
+}
+async function getJSON(url) {
+  const r = await fetch(withToken(url));
+  if (!r.ok) {
+    throw new Error(r.status === 404
+      ? 'This session has no replay data. Sessions recorded before replay was added can still be analysed in History.'
+      : `Server answered ${r.status}`);
+  }
+  return r.json();
+}
+function lastAtOrBefore(T, t) {
+  let lo = 0, hi = T.length - 1;
+  if (!T.length || t < T[0]) return -1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (T[mid] <= t) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+async function loadFrames(a, b, replace) {
+  const data = await getJSON(`/api/sessions/${R.sid}/frames?a=${a.toFixed(2)}&b=${b.toFixed(2)}`);
+  if (replace) { R.fastT = []; R.fastF = []; R.slowT = []; R.slowF = []; R.fi = -1; R.sj = -1; }
+  for (const [kind, T, F] of [['fast', R.fastT, R.fastF], ['slow', R.slowT, R.slowF]]) {
+    for (const [t, f] of data[kind]) {
+      if (T.length && t <= T[T.length - 1]) continue;
+      T.push(t); F.push(f);
+    }
+  }
+  R.lo = R.fastT.length ? R.fastT[0] : a;
+  R.hi = R.fastT.length ? R.fastT[R.fastT.length - 1] : b;
+}
+
+function trimFrames() {
+  // keep about a minute behind the playhead so long sessions don't grow memory
+  for (const [T, F, key] of [[R.fastT, R.fastF, 'fi'], [R.slowT, R.slowF, 'sj']]) {
+    const cut = lastAtOrBefore(T, R.t - 60);
+    if (cut > 200) { T.splice(0, cut); F.splice(0, cut); R[key] = Math.max(-1, R[key] - cut); }
+  }
+  if (R.fastT.length) R.lo = R.fastT[0];
+}
+
+function applyFast(i) {
+  if (i < 0) return;
+  R.fi = i;
+  S.fast = R.fastF[i];
+  S.lastFast = performance.now();
+  S.dirty = true;
+}
+function applySlow(j) {
+  if (j < 0 || j === R.sj) return;
+  R.sj = j;
+  S.slow = R.slowF[j];
+  renderSlow();
+}
+function rebuildAt(t) {
+  TR.i = 0; TR.count = 0;
+  const i = lastAtOrBefore(R.fastT, t);
+  for (let k = Math.max(0, i - TR.n + 1); k <= i; k++) if (R.fastF[k].connected) pushTrace(R.fastF[k]);
+  applyFast(i);
+  R.sj = -1;
+  applySlow(lastAtOrBefore(R.slowT, t));
+}
+
+async function seek(t) {
+  if (!R.tl) return;
+  t = clamp(t, R.tl.t0, R.tl.t1);
+  R.t = t;
+  if (!(t >= R.lo && t <= R.hi)) {
+    R.loading = loadFrames(t - 25, t + 40, true);
+    try { await R.loading; } catch (e) { console.error(e); } finally { R.loading = null; }
+  }
+  rebuildAt(R.t);
+  updateBar();
+}
+
+function ensureAhead() {
+  if (R.loading || !R.tl || R.hi >= R.tl.t1 - 0.01) return;
+  if (R.t + Math.max(15, R.speed * 8) < R.hi) return;
+  const a = R.hi, b = R.hi + Math.max(40, R.speed * 20);
+  R.loading = loadFrames(a, b, false).catch((e) => console.error(e)).finally(() => { R.loading = null; trimFrames(); });
+}
+
+function replayTick(now) {
+  const dt = R.last ? Math.min(0.25, (now - R.last) / 1000) : 0;
+  R.last = now;
+  if (R.playing && !R.drag && R.tl) {
+    // waits at the edge of what's loaded while the next block arrives
+    R.t = Math.min(R.t + dt * R.speed, R.tl.t1, Math.max(R.hi, R.t));
+    if (R.t >= R.tl.t1) setPlaying(false);
+    const i = lastAtOrBefore(R.fastT, R.t);
+    if (i > R.fi) {
+      if (i - R.fi > TR.n) rebuildAt(R.t);
+      else {
+        for (let k = R.fi + 1; k <= i; k++) if (R.fastF[k].connected) pushTrace(R.fastF[k]);
+        applyFast(i);
+      }
+    }
+    applySlow(lastAtOrBefore(R.slowT, R.t));
+  }
+  ensureAhead();
+  updateBar();
+  requestAnimationFrame(replayTick);
+}
+
+function setPlaying(on) {
+  if (on && R.tl && R.t >= R.tl.t1) seek(R.tl.t0);
+  R.playing = on;
+  const b = $('rb-play');
+  b.textContent = on ? 'Pause' : 'Play';
+  b.setAttribute('aria-pressed', String(on));
+}
+
+function lapStarts() { return (R.tl?.laps || []).map((l) => l.t).filter(isNum); }
+function prevLap() { const s = lapStarts().filter((t) => t < R.t - 2); seek(s.length ? s[s.length - 1] : R.tl.t0); }
+function nextLap() { const s = lapStarts().find((t) => t > R.t + 0.5); if (s != null) seek(s); }
+
+function buildTimeline() {
+  const { t0, t1, laps, events } = R.tl;
+  const pos = (t) => `${clamp((t - t0) / ((t1 - t0) || 1) * 100, 0, 100)}%`;
+  let html = '';
+  for (const l of laps) if (isNum(l.t)) html += `<i class="mk lap" style="left:${pos(l.t)}"></i>`;
+  for (const e of events) {
+    const cls = e.kind === 'incident' ? 'inc' : e.kind.startsWith('pit') ? 'pit' : e.kind === 'flag' && e.data?.flag === 'yellow' ? 'yel' : null;
+    if (cls) html += `<i class="mk ${cls}" style="left:${pos(e.t)}"></i>`;
+  }
+  $('rb-marks').innerHTML = html;
+}
+
+function updateBar() {
+  if (!R.tl) return;
+  const { t0, t1 } = R.tl;
+  const f = clamp((R.t - t0) / ((t1 - t0) || 1), 0, 1);
+  $('rb-fill').style.width = `${f * 100}%`;
+  $('rb-head').style.left = `${f * 100}%`;
+  const lap = S.fast?.lap > 0 ? `Lap ${S.fast.lap}    ` : '';
+  txt('rb-time', `${lap}${fmtClock(R.t - t0)} of ${fmtClock(t1 - t0)}${R.loading ? '    Loading' : ''}`);
+}
+
+function bindReplayControls() {
+  $('rb-play').addEventListener('click', () => setPlaying(!R.playing));
+  $('rb-back').addEventListener('click', () => seek(R.t - 10));
+  $('rb-fwd').addEventListener('click', () => seek(R.t + 10));
+  $('rb-prev').addEventListener('click', prevLap);
+  $('rb-next').addEventListener('click', nextLap);
+  $('rb-speed').addEventListener('change', (e) => { R.speed = Number(e.target.value); });
+  const tl = $('rb-tl');
+  const tAt = (e) => { const r = tl.getBoundingClientRect(); return R.tl.t0 + clamp((e.clientX - r.left) / r.width, 0, 1) * (R.tl.t1 - R.tl.t0); };
+  tl.addEventListener('pointerdown', (e) => { if (!R.tl) return; R.drag = true; tl.setPointerCapture(e.pointerId); R.t = tAt(e); updateBar(); });
+  tl.addEventListener('pointermove', (e) => { if (R.drag) { R.t = tAt(e); updateBar(); } });
+  tl.addEventListener('pointerup', (e) => { if (!R.drag) return; R.drag = false; seek(tAt(e)); });
+  tl.addEventListener('pointercancel', () => { R.drag = false; });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest('select, input')) return;
+    if (e.key === ' ') { e.preventDefault(); setPlaying(!R.playing); }
+    else if (e.key === 'ArrowLeft') seek(R.t - (e.shiftKey ? 30 : 5));
+    else if (e.key === 'ArrowRight') seek(R.t + (e.shiftKey ? 30 : 5));
+  });
+}
+
+async function startReplay() {
+  document.body.classList.add('replaying');
+  $('replaybar').hidden = false;
+  const tok = PARAMS.get('token');
+  $('rb-exit').href = `history.html${tok ? `?token=${encodeURIComponent(tok)}` : ''}#${R.sid}`;
+  $('nav-hist').href = $('rb-exit').href;
+  S.sock = 'up';
+  bindReplayControls();
+  try {
+    const [tl, detail] = await Promise.all([getJSON(`/api/sessions/${R.sid}/timeline`), getJSON(`/api/sessions/${R.sid}`)]);
+    R.tl = tl;
+    S.map = { points: detail.map };
+  } catch (e) {
+    txt('flag', 'Replay');
+    txt('track', 'Can’t replay this session');
+    $('sess').innerHTML = `<span>${esc(e.message)}</span>`;
+    return;
+  }
+  buildTimeline();
+  const start = Number(PARAMS.get('t'));
+  await seek(start > 0 ? start : R.tl.t0);
+  setPlaying(true);
+  requestAnimationFrame(replayTick);
+}
+
+if (REPLAY) startReplay(); else connect();
 requestAnimationFrame(frame);

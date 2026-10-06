@@ -26,6 +26,9 @@
     <span id="h-rem" class="clock-val mono">--:--</span>
   </div>
   <div class="tools">
+    <a id="nav-hist" class="tool" href="history.html" title="History and lap analysis" aria-label="History and lap analysis">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 20h18M5 16l4-6 4 3 6-8" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+    </a>
     <button id="btn-fs" class="tool" title="Fullscreen" aria-label="Fullscreen">
       <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
     </button>
@@ -184,6 +187,26 @@
     </section>
   </div>
 </main>
+
+<div id="replaybar" class="replaybar" hidden>
+  <div class="rb-row">
+    <a id="rb-exit" class="rb-btn" href="history.html">History</a>
+    <button id="rb-prev" class="rb-btn" title="Previous lap">Prev lap</button>
+    <button id="rb-back" class="rb-btn" title="Back 10 seconds (Left arrow: 5 s)">−10 s</button>
+    <button id="rb-play" class="rb-btn rb-play" aria-pressed="false">Play</button>
+    <button id="rb-fwd" class="rb-btn" title="Forward 10 seconds (Right arrow: 5 s)">+10 s</button>
+    <button id="rb-next" class="rb-btn" title="Next lap">Next lap</button>
+    <label class="rb-speed">Speed
+      <select id="rb-speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option></select>
+    </label>
+    <span id="rb-time" class="rb-time"></span>
+  </div>
+  <div id="rb-tl" class="rb-tl" title="Drag to seek">
+    <div id="rb-fill" class="rb-fill"></div>
+    <div id="rb-marks"></div>
+    <div id="rb-head" class="rb-head"></div>
+  </div>
+</div>
 
 <nav id="tabs">
   <button data-go="dash">Drive</button>

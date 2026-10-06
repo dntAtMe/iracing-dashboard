@@ -138,6 +138,76 @@ Rows are sorted by `CarIdxPosition`; unclassified cars go last, ordered by best 
 `CarIdxF2Time` and `down` counts whole laps behind the leader. In practice and qualifying the gap is best lap minus
 the fastest best lap. The interval is the gap difference to the car ahead.
 
+## History
+
+`history.py` holds the recorder, the data folder and the read queries. The `Recorder` runs on the telemetry thread
+with its own SQLite connection. The web server opens a short-lived read connection per request. Local folders use
+WAL mode so reads never block recording. Network folders use rollback journaling, because WAL needs shared memory
+that network file systems don't provide.
+
+### Tables
+
+| Table | One row per | Contents |
+|---|---|---|
+| `sessions` | iRacing session (SubSessionID, SessionID, SessionNum) | Track, config, map key, length, car, session type, driver, start and end time |
+| `laps` | Lap driven, including partial laps | Time (iRacing's official time once published, else measured), fuel used, pit, incidents, position, top speed, temperatures, tyre snapshot, and `data`: the lap's telemetry as zlib-compressed columnar JSON |
+| `events` | Event | `flag`, `incident`, `pit_in`, `pit_out` (with fuel added), `position` (races), `state`, each with session time, lap and lap distance |
+| `drivers` | Car in the session | Name, number, class, class colour, iRating |
+| `car_laps` | Lap completed by any car | Lap time and position, for the session pace chart |
+| `frames` | 10 s block of broadcast messages | `fast` or `slow`, time span, and the messages as zlib-compressed `[sessionTime, message]` items |
+
+Lap telemetry channels: `t` (seconds since the lap started), `pct`, `speed`, `rpm`, `gear`, `thr`, `brk`, `clu`,
+`steer`, `latG`, `lonG`, `yawRate`, `fuel`, `abs`, `pit`. One sample is stored per telemetry tick (60 Hz live).
+Channels the car doesn't report are left out.
+
+Laps are cut at `LapCompleted` changes. A lap that started mid-way (joining a session, after a reset or tow) is kept
+with `partial = 1`. Samples recorded just either side of the line are shifted to −0.0x or 1.0x of the lap so the
+traces don't wrap.
+
+Sessions with no laps are deleted when they end. Sessions left open by a crash are closed on the next start.
+
+### Data folder
+
+`Storage` resolves the folder from `--data-dir`, then `config.json`, then the project folder. Changing it through
+`POST /api/storage` validates the folder (it must exist or be created, and be writable), saves `config.json`, and asks
+the recorder to switch. The switch happens on the telemetry thread: the current session ends in the old database
+and the next one starts in the new one. Track maps used by recorded sessions are copied into `<folder>/maps/`. The
+History page looks there first, then in the project's `maps/`.
+
+Browsing and changing the folder is only allowed for requests from the PC itself (`127.0.0.1` or `::1`).
+
+### API
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/sessions` | Session list with lap count, best lap and replay block count |
+| `GET /api/sessions/{id}` | Session, lap summaries, events, drivers, field lap times, track outline, and whether it's still recording |
+| `GET /api/laps/{id}` | One lap's telemetry. Sent still compressed (`Content-Encoding: deflate`) when the browser accepts it |
+| `GET /api/sessions/{id}/timeline` | Replay time span, lap start times and events |
+| `GET /api/sessions/{id}/frames?a=&b=` | Stored `fast` and `slow` messages overlapping that span of session time |
+| `DELETE /api/sessions/{id}` | Deletes a session that isn't recording |
+| `GET /api/storage` | Data folder in use, and whether this device may change it |
+| `GET /api/storage/browse?path=` | Subfolders and drives, for the folder picker (sim PC only) |
+| `POST /api/storage` | `{"dir": "..."}` switches the data folder (sim PC only) |
+
+All of them require `?token=` when the server runs with `--token`.
+
+### Replay
+
+`index.html?replay=<session>&t=<sessionTime>` opens the live view without a WebSocket. The player in `app.js` keeps a
+clock in session time, loads stored messages in windows ahead of the playhead (larger windows at higher speeds), and
+on every animation frame applies the newest `fast` and `slow` message at or before the clock, exactly as if they had
+arrived live. Seeking outside the loaded window loads a new one around the target and rebuilds the input trace from
+the 20 seconds before it. Messages older than a minute behind the playhead are dropped.
+
+### Analysis page
+
+`history.js` draws every chart on two stacked canvases: the traces (redrawn when the zoom or the selected laps change)
+and the cursor overlay (redrawn on every pointer move). Traces are decimated to one vertical min/max span per half
+pixel, so dense 60 Hz laps stay fast and keep their peaks. The delta trace interpolates the reference lap's elapsed
+time at each sample's distance. Ghost markers on the map use the reverse lookup: where each lap was at the reference
+lap's time at the cursor.
+
 ## Front end
 
 Plain HTML, CSS and JavaScript with no build step.
